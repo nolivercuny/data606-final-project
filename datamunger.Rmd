@@ -1,0 +1,62 @@
+---
+title: DATA 606 Data Project
+author: Nick Oliver
+output:
+  pdf_document: default
+  html_document:
+    includes:
+      in_header: header.html
+    css: ./lab.css
+    highlight: pygments
+    theme: cerulean
+    toc: true
+    toc_float: true
+---
+
+```{r}
+library(tidyverse)
+```
+
+
+```{r}
+committeesRawDf <- read.csv('committees.csv')
+```
+
+```{r}
+committeesCleanDf <- committeesRawDf %>% filter(party == 'DEM' | party == 'REP')
+```
+
+```{r}
+headers <- read.csv('indiv_header_file.csv')
+```
+
+```{r}
+mungeData <- function(fileName){
+  df <- read.csv(fileName, header = FALSE, sep='|', nrows = 5000000)
+  names(df) <- names(headers)
+  joined <- committeesCleanDf %>%
+  inner_join(df, by = c("committee_id" = "CMTE_ID")) %>%
+    mutate(year = str_sub(TRANSACTION_DT, start=-4)) %>%
+  select(party,state,OCCUPATION,year) %>%
+  filter(OCCUPATION != 'N/A' | OCCUPATION == '') 
+}
+```
+
+
+
+```{r}
+df16 <- mungeData('indivcont16.csv')
+df18 <- mungeData('indivcont18.csv')
+df20 <- mungeData('indivcont20.csv')
+df22 <- mungeData('indivcont22.csv')
+```
+
+```{r}
+merged <- df16 %>% bind_rows(df18) %>% bind_rows(df20) %>% bind_rows(df22)
+```
+```{r}
+write.csv(merged,'merged.csv')
+```
+
+
+

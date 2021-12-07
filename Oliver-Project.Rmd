@@ -1,0 +1,354 @@
+---
+title: DATA 606 Data Project
+author: Nick Oliver
+output:
+  pdf_document: default
+  html_document:
+    includes:
+      in_header: header.html
+    css: ./lab.css
+    highlight: pygments
+    theme: cerulean
+    toc: true
+    toc_float: true
+---
+
+# DATA 606 - Final Project
+
+## Part 1 - Introduction
+
+### Abstract 
+
+My question was to find if a person's occupation being in a Science, Technology, Engineering, or Mathematics (STEM) field is a stronger predictor of which political party a person will donate to over simply the state that they live in. I used the Federal Election Commissions's Contributions by individuals campaign finance data[^2], along with MIT's Presidential Election data[^3] to perform binomial logistic regression using two predictors, employment in a STEM field and living in democratic or republican voting state. My results show the combination of the two predictors, employment in a STEM field and residence in a blue or red state, result in the best fit prediction model for predicting which political party a random donating individual is likely to donate to using the Akaike information criterion (AIC) value as the selection criteria for selecting the best fit. In addition, I was able to show that what state a person lives in provides a better fitting model for predicting political party donations over simply using employment in a STEM occupation again using AIC as the criteria for determining best fit. My results show that while there is predictive value in knowing if a person is employed in a STEM field when it comes to determining their political donation proclivities, it does not appear to be a better predictor than simply knowing which state a person lives in and whether the majority of that state voted for a particular party in the U.S. presidential election.
+
+### Background
+
+My project was inspired by the data analysis that FiveThirtyEight published in April of 2017 regarding which careers donate to which political parties titled *When Scientists Donate To Politicians, It’s Usually To Democrats*[^4]. The conclusion of the analysis was that professionals employed in the science, technology, engineering, and mathematics (STEM) fields are more likely to donate to democratic candidates over republicans. 
+
+When looking at the data that FiveThirtyEight used for the analysis I was curious if there was a stronger correlation between one's geographic location and their donation habits or their profession. In order to perform my analysis I had to supplement the FiveThirtyEight dataset with presidential election results by state. In addition, simply using FiveThirtyEight's dataset was not sufficient to perform my analysis because they filtered the data to only include donations made by those employed in STEM occupations.
+
+
+## Part 2 - Data
+
+
+```{r, echo=FALSE, results='hide', warning=FALSE, message=FALSE}
+#Load libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(cowplot)
+library(tidyverse)
+```
+### FiveThirtyEight FEC Cleaned Data
+
+For my first data set I will use FiveThirtyEight's cleaned and manipulated version of the Federal Election Commission individual contributions data set[^4] used in their article [When Scientists Donate To Politicians, It’s Usually To Democrats](https://fivethirtyeight.com/features/when-scientists-donate-to-politicians-its-usually-to-democrats/). 
+
+For my analysis I am using it soley for the purposes of using their definition of STEM occupation. For that reason I will only be selecting a dataframe containing unique occupations from FiveThirtyEight's original data set.
+
+Below is a glimpse of the data.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# load data
+fiveThirtyEightDf <- read.csv("science_federal_giving.csv") %>% select(cleanedoccupation) %>%
+  distinct()
+glimpse(fiveThirtyEightDf)
+```
+### Federal Election Commision Bulk Data
+
+My second data sources is a subset of the Federal Election Commision's (FEC) individual contributions bulk data set. The source data is publicly available for download on the [FEC's website bulk data download page](https://www.fec.gov/data/browse-data/?tab=bulk-data).
+
+In addition I used the FEC's committee data to enrich the individual contributions data with the political affiliation of the organization that the individual contributed to. That data is also publicly available on the [FEC's website committees dat page](https://www.fec.gov/data/committees/)
+
+For my analysis I am using the donating individuals occupation, data of residence, date of donation, and contribution beneficiary from the data set. Due to the size of the data I randomly sampled one million rows from the following years, 2022-2021, 2020-2019, 2018-2017, and 2016-2015. I filtered all contributions to parties that were not democrat or republican.
+
+Here is a glimpse of the resulting data set.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+donationsRaw <- read.csv('fec_data.csv')
+glimpse(donationsRaw)
+```
+
+### MIT Presidental Election Data
+
+My last data set is MIT's publicly available presidential election data set. This data is publicly available for download on the [Harvard Dataverse website](https://dataverse.harvard.edu/file.xhtml?fileId=4299753&version=6.0)
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+load('1976-2020-president.RData')
+electionByState <- x
+glimpse(electionByState)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#Tidy data
+
+# Use FiveThirtyEight's definition of STEM to add column to raw FEC data that indicates STEM or not
+stemOccs <- fiveThirtyEightDf %>%
+  select(cleanedoccupation) %>%
+  distinct()
+
+#there is a lot of data with "bad" occupations so I will remove those in a hamfisted way
+donations <- donationsRaw %>% filter(grepl("^[A-Z ]*$",OCCUPATION)) %>%
+  filter(str_trim(OCCUPATION) != "") %>%
+  mutate(stem = OCCUPATION %in% stemOccs$cleanedoccupation) %>%
+  select(!X) %>%
+  rename(occupation = OCCUPATION)
+
+#Use MIT election data to add blue state indicator
+partyWinByStateByYearDf <-electionByState %>%
+  filter(party_simplified == 'DEMOCRAT' |
+           party_simplified == "REPUBLICAN") %>%
+  select(state_po,party_simplified,candidatevotes,totalvotes,year ) %>%
+  pivot_wider(names_from = party_simplified, values_from=candidatevotes,values_fn = sum) %>%
+  mutate(blueState= DEMOCRAT > REPUBLICAN) %>%
+  rename(state = state_po) %>%
+  select(year, blueState, state)
+
+finalDf <- inner_join(donations, partyWinByStateByYearDf, by=c('year'='year', 'state'='state'))
+```
+
+I now have a dataset which contains an individuals occupation, which political party the individual donated to, the state they resided in when the donation was made, the year the data was collected, if their occupation is STEM, and the presidential election results of the state of residence of that individual for the year they donated. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+glimpse(finalDf)
+```
+
+## Part 3 - Exploratory data analysis
+
+Does their occupation have a significant impact on their donation outcome over their state? Meaning, do engineers uniformly donate to dems even if they live in red states or does that not have an impact?
+
+Take top five STEM
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+finalDf %>% filter(stem) %>% group_by(occupation) %>% count() %>% arrange(desc(n)) %>% head(5)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+engineerPlot <-finalDf %>% 
+  filter(occupation == "ENGINEER") %>%
+  summarize(
+      dem = sum(party == "DEM"),
+      rep = sum(party == "REP")
+      ) %>% 
+  pivot_longer(cols=c(dem,rep)) %>%
+  ggplot(aes(x=name, y=value, fill=name)) + 
+    geom_bar(stat='identity') +
+  scale_fill_manual("legend", values = c("dem" = "blue", "rep" = "red")) + 
+  ggtitle("ENGINEER") +
+  xlab("Party") + ylab("Vote Count")
+
+softwarePlot<-finalDf %>% 
+  filter(occupation == "SCIENTIST") %>%
+  summarize(
+      dem = sum(party == "DEM"),
+      rep = sum(party == "REP")
+      ) %>% 
+  pivot_longer(cols=c(dem,rep)) %>%
+  ggplot(aes(x=name, y=value, fill=name)) + 
+    geom_bar(stat='identity') +
+  scale_fill_manual("legend", values = c("dem" = "blue", "rep" = "red")) + 
+  ggtitle("SCIENTIST") +
+  xlab("Party") + ylab("Vote Count")
+
+scientistPlot<-finalDf %>% 
+  filter(occupation == "DATA SCIENTIST") %>%
+  summarize(
+      dem = sum(party == "DEM"),
+      rep = sum(party == "REP")
+      ) %>% 
+  pivot_longer(cols=c(dem,rep)) %>%
+  ggplot(aes(x=name, y=value, fill=name)) + 
+    geom_bar(stat='identity') +
+  scale_fill_manual("legend", values = c("dem" = "blue", "rep" = "red")) + 
+  ggtitle("DATA SCIENTIST") +
+  xlab("Party") + ylab("Vote Count")
+
+civilPlot <- finalDf %>% 
+  filter(occupation == "CIVIL ENGINEER") %>%
+  summarize(
+      dem = sum(party == "DEM"),
+      rep = sum(party == "REP")
+      ) %>% 
+  pivot_longer(cols=c(dem,rep)) %>%
+  ggplot(aes(x=name, y=value, fill=name)) + 
+    geom_bar(stat='identity') +
+  scale_fill_manual("legend", values = c("dem" = "blue", "rep" = "red")) + 
+  ggtitle("Civil Engineer") +
+  xlab("Party") + ylab("Vote Count")
+
+physictsPlot <- finalDf %>% 
+  filter(occupation == "RESEARCH SCIENTIST") %>%
+  summarize(
+      dem = sum(party == "DEM"),
+      rep = sum(party == "REP")
+      ) %>% 
+  pivot_longer(cols=c(dem,rep)) %>%
+  ggplot(aes(x=name, y=value, fill=name)) + 
+    geom_bar(stat='identity') +
+  scale_fill_manual("legend", values = c("dem" = "blue", "rep" = "red")) + 
+  ggtitle("RESEARCH SCIENTIST") +
+  xlab("Party") + ylab("Vote Count")
+
+plot_grid(engineerPlot, softwarePlot, scientistPlot, civilPlot, physictsPlot, labels = "AUTO")
+```
+
+By including the election data by state we can look in aggregate and see how often the donation data diverges from the presidential election results. Meaning how often does an individual donate to a political party that did not win in the general presidential election in their state. 
+
+Grouping by state and occupation, summing up the number of donations for each party, then adding a column which indicates if that majority of that occupation per state donated to dems or reps. 
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+donGroupedDf <- finalDf %>% 
+  group_by(state, occupation) %>%
+  summarize(
+      state,
+      blueState,
+      year,
+      dem = sum(party == "DEM"),
+      rep = sum(party == "REP")
+      ) %>% 
+  distinct() %>%
+  mutate(donationsMajorityDem = dem > rep) %>% 
+  select(!c('dem','rep')) %>%
+  mutate(donationsMatchState = blueState == donationsMajorityDem) 
+ donGroupedDf %>%
+   group_by(donationsMatchState) %>%
+   count(donationsMatchState) %>% 
+   ggplot(aes(x=donationsMatchState, y=n)) + 
+   geom_bar(stat="identity")
+```
+Here we can see that out of our dataset which contains 21,002 unique occupation + state combinations, 13,928 times the majority of the donations matched the state that the person resided in and 7,074 times it diverged. 
+
+which is a better predictor
+
+if we know <state> -> dem|rep
+if we know <state> and <occupation> -> dem|rep
+if we know <occupation> -> dem|rep
+
+because there are too many different occupations and states I need to filter the dataset down to perform the actual modeling
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+filteredPartyDf <- finalDf %>% mutate(donateDem = party == "DEM") %>% select(donateDem, stem, blueState, year)
+```
+
+
+## Part 4 - Inference
+
+I will be using binomial logistic regression with the two predictors, residence in a blue state and employement in a STEM field, as my predictors for donating to a democractic candidate. In addition I will use both as predictors in a single model. I will then compare the fit using Akaike information criterion (AIC).
+
+### STEM As Single Predictor
+
+First we I fit the model using employment in a STEM occupation as our single predictor.
+
+```{r}
+stemResult <- glm(donateDem ~ stem, data = filteredPartyDf, family = binomial)
+summary(stemResult)
+```
+
+\[
+logit(p_i) = 1.191939 + 0.479193 \times stemoccupation
+\]
+
+What this means according to our model is that if a randomly selected person who donates to a political party is not employeed in a STEM field their probability of donating to a democrat is 
+
+We set stem_occupation = 0 and solve for p
+
+\[
+\frac{e^{1.191939}}{1+e^{1.191939}} = 0.7670877
+\]
+
+$\hat{p}_i$=0.7671
+
+subsequently the probability if they are employed in a STEM field is equal to
+
+\[
+\frac{e^{1.191939+0.479193}}{1+e^{1.191939+0.479193}}=0.84172668778
+\]
+
+$\hat{p}_i$=0.8417
+
+### Blue State
+
+```{r}
+demResult <- glm(donateDem ~ blueState, data = filteredPartyDf, family = binomial)
+summary(demResult)
+```
+
+\[
+logit(p_i) = -0.477424 + 1.846412 \times blueState
+\]
+
+Which means the probability of a random donating person donating democrat if they do not live in a blue state is equal to
+
+\[
+\frac{e^{-0.477424}}{1+e^{-0.477424}} = 0.38286059434
+\]
+
+$\hat{p}_i$=0.3829
+
+And the probability of a random donating person donating to a democrat if they do live in a blue state is
+
+\[
+\frac{e^{-0.477424+1.846412}}{1+e^{-0.477424+1.846412}}=0.79721660053
+\]
+
+$\hat{p}_i$=0.7972
+
+### STEM Occupation + Blue State
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+bothResult <- glm(donateDem ~ stem + blueState, data = filteredPartyDf, family = binomial)
+summary(bothResult)
+```
+Finally running the model on both
+
+\[
+logit(p_i) = -0.488228 + 0.488241 \times stemOccupation + 1.847023 \times blueState
+\]
+
+|live in blue state|STEM profession|$\hat{p}_i$|
+|------------------|---------------|-----------|
+|yes               |yes            |0.8638     |
+|yes               |no             |0.7956     |
+|no                |yes            |0.5000     |
+|no                |no             |0.3803     |
+
+### Best Fit Using AIC
+
+When looking at the AIC for the three different models, using just STEM we have 1525081, using Blue State we have 1454607, and using both we have 1453508. 
+
+According to OpenIntro Statistics[^1] 
+
+> Just like multiple regression, we could trim some variables from the model. Here we’ll use a statistic called Akaike information criterion (AIC), which is an analog to how we used adjusted R-squared in multiple regression, and we look for models with a lower AIC through a backward elimination strategy.
+
+Given our AIC values this would seem to indicate that the best fit model is the model that includes both the state of residence and if the person is employed in a STEM occupation.
+
+### Verifying Logistic Regression Conditions
+
+There are two key conditions for fitting a logistic regression model:
+
+1. Each outcome $Y_i$ is independent of the other outcomes.
+2. Each predictor $x_i$ is linearly related to logit($p_i$) if all other predictors are held constant
+
+For condition one we can safely assume that whether an individual donates to a democrat or republican is generally independent across the entire donating population of the United States.
+
+## Part 5 - Conclusion
+
+My results show the combination of the two predictors, employment in a STEM field and residence in a blue or red state, result in the best fit prediction model for predicting which political party a random donating individual is likely to donate to using the Akaike information criterion (AIC) value as the selection criteria for selecting the best fit. 
+
+In addition, I was able to show that what state a person lives in provides a better fitting model for predicting political party donations over simply using employment in a STEM occupation again using AIC as the criteria for determining best fit. My results show that while there is predictive value in knowing if a person is employed in a STEM field when it comes to determining their political donation proclivities, it does not appear to be a better predictor than simply knowing which state a person lives in and whether the majority of that state voted for a particular party in the U.S. presidential election.
+
+
+### References
+
+1. Diez, D. M., Barr, C. D., &amp; Cetinkaya-Rundel Mine. (2019). 9.5.3 Building the logistic model with many variables. In OpenIntro statistics (pp. 374–374). essay, OpenIntro, Inc. 
+
+2. Contributions by individuals. FEC.gov. (n.d.). Retrieved December 6, 2021, from https://www.fec.gov/campaign-finance-data/contributions-individuals-file-description/. 
+
+3. MIT Election Data and Science Lab, 2017, "U.S. President 1976–2020", https://doi.org/10.7910/DVN/42MVDX, Harvard Dataverse, V6, UNF:6:4KoNz9KgTkXy0ZBxJ9ZkOw== [fileUNF]
+
+4. Benbwieder. (2017, April 21). When scientists donate to politicians, it's usually to Democrats. FiveThirtyEight. Retrieved December 6, 2021, from https://fivethirtyeight.com/features/when-scientists-donate-to-politicians-its-usually-to-democrats/.
+
+[^1]:Diez, D. M., Barr, C. D., &amp; Cetinkaya-Rundel Mine. (2019). 9.5.3 Building the logistic model with many variables. In OpenIntro statistics (pp. 374–374). essay, OpenIntro, Inc. 
+
+[^2]:Contributions by individuals. FEC.gov. (n.d.). Retrieved December 6, 2021, from https://www.fec.gov/campaign-finance-data/contributions-individuals-file-description/. 
+
+[^3]:MIT Election Data and Science Lab, 2017, "U.S. President 1976–2020", https://doi.org/10.7910/DVN/42MVDX, Harvard Dataverse, V6, UNF:6:4KoNz9KgTkXy0ZBxJ9ZkOw== [fileUNF]
+
+[^4]:Benbwieder. (2017, April 21). When scientists donate to politicians, it's usually to Democrats. FiveThirtyEight. Retrieved December 6, 2021, from https://fivethirtyeight.com/features/when-scientists-donate-to-politicians-its-usually-to-democrats/. 
