@@ -61,6 +61,8 @@ In addition I used the FEC's committee data to enrich the individual contributio
 
 For my analysis I am using the donating individuals occupation, data of residence, date of donation, and contribution beneficiary from the data set. Due to the size of the data I randomly sampled one million rows from the following years, 2022-2021, 2020-2019, 2018-2017, and 2016-2015. I filtered all contributions to parties that were not democrat or republican.
 
+A copy of this data is located in comrpess format for download in this projects [GitHub Repository here](https://github.com/nolivercuny/data606-final-project/blob/main/fec_data.7z)
+
 Here is a glimpse of the resulting data set.
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
@@ -104,22 +106,27 @@ partyWinByStateByYearDf <-electionByState %>%
   select(year, blueState, state)
 
 finalDf <- inner_join(donations, partyWinByStateByYearDf, by=c('year'='year', 'state'='state'))
+
+filteredPartyDf <- finalDf %>% mutate(donateDem = party == "DEM") %>% select(donateDem, stem, blueState, year)
 ```
 
-I now have a dataset which contains an individuals occupation, which political party the individual donated to, the state they resided in when the donation was made, the year the data was collected, if their occupation is STEM, and the presidential election results of the state of residence of that individual for the year they donated. 
+After manipulating the data to fit my analysis I am left with a simple data set which contains true/false values for if the individual donated to a democratic organization, if their occupation was in a STEM field, and if they resided in a state where the majority of the population voted for a democratic presidential candidate in the year of the donation.
+
+Here is a glimpse of the data set.
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
-glimpse(finalDf)
+glimpse(filteredPartyDf)
 ```
 
 ## Part 3 - Exploratory data analysis
 
-Does their occupation have a significant impact on their donation outcome over their state? Meaning, do engineers uniformly donate to dems even if they live in red states or does that not have an impact?
+Take top five STEM occupations
 
-Take top five STEM
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 finalDf %>% filter(stem) %>% group_by(occupation) %>% count() %>% arrange(desc(n)) %>% head(5)
 ```
+
+Do they uniformly donate to democratic organizations? These plots show that the conclusions drawn by the author of FiverThirtyEight's article have some validity given that an overwhelming majority of the donations made by these occupations are to democratic organizations.
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 engineerPlot <-finalDf %>% 
@@ -192,7 +199,8 @@ plot_grid(engineerPlot, softwarePlot, scientistPlot, civilPlot, physictsPlot, la
 
 By including the election data by state we can look in aggregate and see how often the donation data diverges from the presidential election results. Meaning how often does an individual donate to a political party that did not win in the general presidential election in their state. 
 
-Grouping by state and occupation, summing up the number of donations for each party, then adding a column which indicates if that majority of that occupation per state donated to dems or reps. 
+Grouping by state and occupation, summing up the number of donations for each party, then adding a column which indicates if that majority of that occupation per state donated to democratic or republican organizations.
+
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 donGroupedDf <- finalDf %>% 
   group_by(state, occupation) %>%
@@ -213,24 +221,12 @@ donGroupedDf <- finalDf %>%
    ggplot(aes(x=donationsMatchState, y=n)) + 
    geom_bar(stat="identity")
 ```
-Here we can see that out of our dataset which contains 21,002 unique occupation + state combinations, 13,928 times the majority of the donations matched the state that the person resided in and 7,074 times it diverged. 
 
-which is a better predictor
-
-if we know <state> -> dem|rep
-if we know <state> and <occupation> -> dem|rep
-if we know <occupation> -> dem|rep
-
-because there are too many different occupations and states I need to filter the dataset down to perform the actual modeling
-
-```{r, echo=FALSE, warning=FALSE, message=FALSE}
-filteredPartyDf <- finalDf %>% mutate(donateDem = party == "DEM") %>% select(donateDem, stem, blueState, year)
-```
-
+Here we can see that out of our the majority of the donations matched the state that the political party of the candidate that received the most votes in the state the person resided in for a given year. 
 
 ## Part 4 - Inference
 
-I will be using binomial logistic regression with the two predictors, residence in a blue state and employement in a STEM field, as my predictors for donating to a democractic candidate. In addition I will use both as predictors in a single model. I will then compare the fit using Akaike information criterion (AIC).
+I will be using binomial logistic regression with the two predictors, residence in a blue state and employment in a STEM field, as my predictors for donating to a democratic candidate. In addition I will use both as predictors in a single model. I will then compare the fit using Akaike information criterion (AIC).
 
 ### STEM As Single Predictor
 
@@ -333,6 +329,18 @@ For condition one we can safely assume that whether an individual donates to a d
 My results show the combination of the two predictors, employment in a STEM field and residence in a blue or red state, result in the best fit prediction model for predicting which political party a random donating individual is likely to donate to using the Akaike information criterion (AIC) value as the selection criteria for selecting the best fit. 
 
 In addition, I was able to show that what state a person lives in provides a better fitting model for predicting political party donations over simply using employment in a STEM occupation again using AIC as the criteria for determining best fit. My results show that while there is predictive value in knowing if a person is employed in a STEM field when it comes to determining their political donation proclivities, it does not appear to be a better predictor than simply knowing which state a person lives in and whether the majority of that state voted for a particular party in the U.S. presidential election.
+
+### Improving & Expanding
+
+I believe this research could be expanded upon and improved in a few ways. 
+
+For one I only used state of residence but the contribution data contained more detailed geographic information about where a contributed was located. Often certain cities or counties will vote overwhelming for a party that does not match the majority of the votes cast in the state. Including this data in the analysis could provide even stronger predicting powers of simply state of residence.
+
+In addition, due to the size of the data I chose to use only a subset of the contribution data available. It is possible different trends could arise given the totality of the data that the FEC provides. 
+
+When it comes to the data itself individuals who donate to political parties are a distinct subset of the population. Donating to a political party likely indicates a high level of political engagement which may bias towards certain political inclinations and could be impacting the data in some way. A more ideal data set may be simply individual surveys or other data collection methods.
+
+Finally, it would be interesting to categorize other occupation types such as social services, unemployed or retirees, to see if there is any discernible donation patterns from those groups of individuals. Also, the definition of STEM is fuzzy and open to interpretation especially given the large amount of variability observed in the occupation data that the FEC collected so there may be more optimal ways of defining what constitutes a STEM occupation.
 
 
 ### References
